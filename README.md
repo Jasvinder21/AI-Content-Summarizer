@@ -1,7 +1,6 @@
 # 🚀 AI Content Summarizer 📝
 A sophisticated content analysis solution empowered by the Google Gemini API and cutting-edge text processing technologies.
 
-This application is built upon advanced natural language processing (NLP) and state-of-the-art machine learning frameworks, harnessing the Gemini API’s robust contextual analysis capabilities to deliver precise and contextually relevant summaries, optimized for professional and academic use.
 <img width="1917" height="967" alt="image" src="https://github.com/user-attachments/assets/a2bd9369-934c-4765-8948-735d026e1222" />
 <img width="1913" height="971" alt="image" src="https://github.com/user-attachments/assets/fc3cdbab-8dc5-408d-bbc1-1a9cb4359acf" />
 
