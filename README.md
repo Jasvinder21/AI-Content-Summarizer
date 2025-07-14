@@ -1,8 +1,10 @@
 # 🚀 AI Content Summarizer 📝
 A sophisticated content analysis solution empowered by the Google Gemini API and cutting-edge text processing technologies.
 
-<img width="1917" height="967" alt="image" src="https://github.com/user-attachments/assets/a2bd9369-934c-4765-8948-735d026e1222" />
-<img width="1913" height="971" alt="image" src="https://github.com/user-attachments/assets/fc3cdbab-8dc5-408d-bbc1-1a9cb4359acf" />
+<img width="1905" height="1018" alt="image" src="https://github.com/user-attachments/assets/de2729db-c31f-49de-b25f-50111202de23" />
+
+<img width="1913" height="971" alt="image" src="https://github.com/user-attachments/assets/344e2175-ce89-4b44-b3f0-e7184e39d3aa" />
+
 
 ## 📖 Overview
 The AI Content Summarizer is a Streamlit-based web application that allows users to summarize various content types using advanced AI capabilities. Leveraging the Gemini API, it provides accurate and engaging summaries, making it ideal for students, professionals, and content enthusiasts.
