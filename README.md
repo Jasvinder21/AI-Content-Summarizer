@@ -9,23 +9,23 @@ The AI Content Summarizer is a Streamlit-based web application that allows users
 
 ## ✨ Features
 
--**🎥 YouTube Video Summarizer8**: Extract transcripts and create summaries (Educational, Entertaining, or Musical).
--**🌐 Website/URL Summarizer**: Scrape and summarize web content instantly.
--**📄 PDF Document Summarizer**: Process and summarize PDF files effortlessly.
--**📚 Summary History**: Review and manage recent summaries with timestamps.
--**📊 Real-Time Statistics**: View word counts and compression ratios.
--**🎨 Modern UI**: Sleek, responsive interface with custom styling.
--**🔑 API Integration**: Customizable with your Google Gemini API Key.
+- **🎥 YouTube Video Summarizer8**: Extract transcripts and create summaries (Educational, Entertaining, or Musical).
+- **🌐 Website/URL Summarizer**: Scrape and summarize web content instantly.
+- **📄 PDF Document Summarizer**: Process and summarize PDF files effortlessly.
+- **📚 Summary History**: Review and manage recent summaries with timestamps.
+- **📊 Real-Time Statistics**: View word counts and compression ratios.
+- **🎨 Modern UI**: Sleek, responsive interface with custom styling.
+- **🔑 API Integration**: Customizable with your Google Gemini API Key.
 
 ## 🛠️ Technology Stack
 
--**Frontend**: Streamlit
--**AI Model**: Google Gemini API
--**Document Processing**: PyPDF2, PyMuPDF
--**Web Scraping**: BeautifulSoup, requests
--**Transcript Extraction**: youtube-transcript-api
--**Database**: SQLite
--**Environment**: python-dotenv
+- **Frontend**: Streamlit
+- **AI Model**: Google Gemini API
+- **Document Processing**: PyPDF2, PyMuPDF
+- **Web Scraping**: BeautifulSoup, requests
+- **Transcript Extraction**: youtube-transcript-api
+- **Database**: SQLite
+- **Environment**: python-dotenv
 
 ## 📦 Installation
 ### Prerequisites
