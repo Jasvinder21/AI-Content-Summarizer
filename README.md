@@ -99,11 +99,11 @@ ai-content-summarizer/
 
 ## 🔧 Key Functions
 
--**extract_transcript_details()**: Fetches YouTube video transcripts.
--**extract_website_text()**: Scrapes and cleans website content.
--**extract_pdf_text()**: Extracts text from PDF files.
--**generate_gemini_content()**: Generates summaries using the Gemini API.
--**save_summary()**: Stores summaries in the database.
+- **extract_transcript_details()**: Fetches YouTube video transcripts.
+- **extract_website_text()**: Scrapes and cleans website content.
+- **extract_pdf_text()**: Extracts text from PDF files.
+- **generate_gemini_content()**: Generates summaries using the Gemini API.
+- **save_summary()**: Stores summaries in the database.
 
 ## 🎯 Use Cases
 
