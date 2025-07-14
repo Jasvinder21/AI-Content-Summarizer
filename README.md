@@ -108,16 +108,16 @@ ai-content-summarizer/
 
 ## 🎯 Use Cases
 
--**🎓 Educational Summaries**: Summarize lectures or tutorials.
--**🌍 Web Research**: Quickly grasp key points from articles.
--**📑 Document Review**: Condense lengthy PDF reports.
--**🎵 Lyrics Extraction**: Extract song lyrics from music videos.
+- **🎓 Educational Summaries**: Summarize lectures or tutorials.
+- **🌍 Web Research**: Quickly grasp key points from articles.
+- **📑 Document Review**: Condense lengthy PDF reports.
+- **🎵 Lyrics Extraction**: Extract song lyrics from music videos.
 
 ## 🔒 Privacy & Security
 
--**🖥️ Local Processing**: Runs locally with your API key.
--**🔐 No External Sharing**: Content stays on your device.
--**💾 Local Storage**: Summaries saved in a local SQLite database.
+- **🖥️ Local Processing**: Runs locally with your API key.
+- **🔐 No External Sharing**: Content stays on your device.
+- **💾 Local Storage**: Summaries saved in a local SQLite database.
 
 ## 🤝 Contributing
 Contributions are welcome! To contribute:
