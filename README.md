@@ -74,9 +74,7 @@ python-dotenv
 ```bash
    streamlit run main.py
 ```
-2. **Access the App** Open your browser and navigate to http://localhost:8501.
-   
-  **live demo**: https://jasvinder21-ai-content-summarizer-main-mhre2b.streamlit.app/.
+2. **Access the App** Open your browser and navigate to http://localhost:8501.or try the **live demo** at https://jasvinder21-ai-content-summarizer-main-mhre2b.streamlit.app/.
 3.**Using the Application**
 - Enter your Gemini API Key in the sidebar.
 - Select a content type (YouTube Video, Website/URL, or PDF Document).
