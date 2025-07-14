@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+jinja2
+python-dotenv
+google-generativeai
+youtube-transcript-api
+streamlit
+google-api-core
+requests
+beautifulsoup4
+PyPDF2
+PyMuPDF
