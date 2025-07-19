@@ -118,20 +118,20 @@ ai-content-summarizer/
 
 ## 🔧 Key Functions
 
-- **extract_transcript_details()**: Fetches YouTube video transcripts with language fallback support.
-- **extract_website_text()**: Scrapes and cleans website content using BeautifulSoup.
-- **extract_pdf_text()**: Extracts text from PDFs using PyMuPDF and PyPDF2..
-- **generate_gemini_content()**: Generates summaries using the Gemini API.
-- **AdaptiveRAG Class:**
+ **extract_transcript_details()**: Fetches YouTube video transcripts with language fallback support.
+ **extract_website_text()**: Scrapes and cleans website content using BeautifulSoup.
+ **extract_pdf_text()**: Extracts text from PDFs using PyMuPDF and PyPDF2..
+ **generate_gemini_content()**: Generates summaries using the Gemini API.
+ **AdaptiveRAG Class:**
 - create_chunks(): Splits text into overlapping chunks for efficient retrieval.
 - add_document(): Adds content to the RAG system with vector embeddings.
 - retrieve_relevant_chunks(): Retrieves relevant document chunks using cosine similarity.
 - generate_response(): Answers queries based on retrieved context with web search fallback.
--**Database Functions:**
+**Database Functions:**
 - init_database(): Sets up SQLite tables for summaries and RAG documents.
 - save_summary(): Stores summary metadata.
 - save_rag_document(): Saves documents for RAG with deduplication using MD5 hashing.
-- 
+  
 ## 🎯 Use Cases
 
 - **🎓 Educational Summaries**: Condense lectures, tutorials, or research papers.
