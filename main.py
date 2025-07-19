@@ -13,13 +13,19 @@ import fitz  # PyMuPDF
 import sqlite3
 from datetime import datetime
 import json
+import numpy as np
+from sentence_transformers import SentenceTransformer
+import faiss
+import pickle
+import hashlib
+from typing import List, Dict, Any
+import re
 
 load_dotenv()  # Load all environment variables
-# Remove: genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 
 # Set custom page config with emoji favicon
 st.set_page_config(
-    page_title="AI Content Summarizer Pro",
+    page_title="AI Content Summarizer ",
     page_icon="🚀",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -60,6 +66,36 @@ st.markdown("""
         margin: 1rem 0;
         box-shadow: 0 4px 20px rgba(0,0,0,0.08);
         border: 1px solid #f0f0f0;
+    }
+    
+    /* Chat styling */
+    .chat-container {
+        background: white;
+        border-radius: 15px;
+        padding: 1rem;
+        margin: 1rem 0;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+        border: 1px solid #f0f0f0;
+        max-height: 400px;
+        overflow-y: auto;
+    }
+    
+    .user-message {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 1rem;
+        border-radius: 15px;
+        margin: 0.5rem 0;
+        text-align: right;
+    }
+    
+    .bot-message {
+        background: #f8f9fa;
+        color: #333;
+        padding: 1rem;
+        border-radius: 15px;
+        margin: 0.5rem 0;
+        border-left: 4px solid #667eea;
     }
     
     /* Button styling */
@@ -183,6 +219,132 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# RAG System Classes
+class AdaptiveRAG:
+    def __init__(self, embedding_model_name='all-MiniLM-L6-v2'):
+        self.embedding_model = SentenceTransformer(embedding_model_name)
+        self.vector_store = None
+        self.documents = []
+        self.document_metadata = []
+        self.chunk_size = 1000
+        self.overlap_size = 200
+        
+    def create_chunks(self, text: str, source_info: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Create overlapping chunks from text"""
+        words = text.split()
+        chunks = []
+        
+        for i in range(0, len(words), self.chunk_size - self.overlap_size):
+            chunk_words = words[i:i + self.chunk_size]
+            chunk_text = ' '.join(chunk_words)
+            
+            chunks.append({
+                'text': chunk_text,
+                'source': source_info['source'],
+                'type': source_info['type'],
+                'chunk_id': len(chunks),
+                'word_count': len(chunk_words)
+            })
+        
+        return chunks
+    
+    def add_document(self, text: str, source_info: Dict[str, Any]):
+        """Add a document to the RAG system"""
+        chunks = self.create_chunks(text, source_info)
+        
+        for chunk in chunks:
+            self.documents.append(chunk['text'])
+            self.document_metadata.append({
+                'source': chunk['source'],
+                'type': chunk['type'],
+                'chunk_id': chunk['chunk_id'],
+                'word_count': chunk['word_count']
+            })
+        
+        self._build_vector_store()
+    
+    def _build_vector_store(self):
+        """Build FAISS vector store"""
+        if not self.documents:
+            return
+        
+        embeddings = self.embedding_model.encode(self.documents)
+        dimension = embeddings.shape[1]
+        
+        self.vector_store = faiss.IndexFlatIP(dimension)  # Inner Product for cosine similarity
+        
+        # Normalize embeddings for cosine similarity
+        faiss.normalize_L2(embeddings)
+        self.vector_store.add(embeddings.astype('float32'))
+    
+    def retrieve_relevant_chunks(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
+        """Retrieve most relevant chunks for a query"""
+        if not self.vector_store or not self.documents:
+            return []
+        
+        query_embedding = self.embedding_model.encode([query])
+        faiss.normalize_L2(query_embedding)
+        
+        scores, indices = self.vector_store.search(query_embedding.astype('float32'), top_k)
+        
+        results = []
+        for score, idx in zip(scores[0], indices[0]):
+            if idx < len(self.documents):
+                results.append({
+                    'text': self.documents[idx],
+                    'score': float(score),
+                    'metadata': self.document_metadata[idx]
+                })
+        
+        return results
+    
+    def generate_response(self, query: str, api_key: str) -> str:
+        """Generate response using retrieved context, fallback to web search if needed"""
+        relevant_chunks = self.retrieve_relevant_chunks(query, top_k=3)
+        if not relevant_chunks:
+            # Fallback to web search
+            web_answer = web_search_answer(query, api_key)
+            return f"🌐 _No answer found in your uploaded documents. This answer is from web search:_\n\n{web_answer}"
+        
+        # Build context from retrieved chunks
+        context = ""
+        sources = set()
+        for chunk in relevant_chunks:
+            context += f"Content from {chunk['metadata']['source']} ({chunk['metadata']['type']}):\n"
+            context += f"{chunk['text']}\n\n"
+            sources.add(f"{chunk['metadata']['source']} ({chunk['metadata']['type']})")
+        
+        # Create prompt
+        prompt = f"""Based on the following context from uploaded documents, please answer the user's question accurately and comprehensively.
+
+Context:
+{context}
+
+User Question: {query}
+
+Please provide a detailed answer based on the context above. If the context doesn't contain enough information to fully answer the question, mention what information might be missing. Always cite which sources your answer comes from.
+
+Answer:"""
+        
+        try:
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel("gemini-1.5-flash")
+            response = model.generate_content(prompt)
+            
+            # Add source information
+            source_list = "\n\n📚 **Sources used:**\n" + "\n".join([f"• {source}" for source in sources])
+            
+            return response.text + source_list
+            
+        except Exception as e:
+            return f"Error generating response: {str(e)}"
+    
+    def clear_documents(self):
+        """Clear all documents from the RAG system"""
+        self.documents = []
+        self.document_metadata = []
+        self.vector_store = None
+
 # Database setup
 def init_database():
     conn = sqlite3.connect('summarizer.db')
@@ -200,6 +362,20 @@ def init_database():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
+    
+    # Add table for RAG documents
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS rag_documents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            content_hash TEXT UNIQUE NOT NULL,
+            content_type TEXT NOT NULL,
+            source_url TEXT,
+            file_name TEXT,
+            content_text TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
     conn.commit()
     conn.close()
 
@@ -213,6 +389,40 @@ def save_summary(content_type, source_url, file_name, summary, word_count, char_
     conn.commit()
     conn.close()
 
+def save_rag_document(content_type, source_url, file_name, content_text):
+    """Save document content for RAG system"""
+    content_hash = hashlib.md5(content_text.encode()).hexdigest()
+    
+    conn = sqlite3.connect('summarizer.db')
+    cursor = conn.cursor()
+    
+    # Check if document already exists
+    cursor.execute('SELECT id FROM rag_documents WHERE content_hash = ?', (content_hash,))
+    if cursor.fetchone():
+        conn.close()
+        return False  # Document already exists
+    
+    cursor.execute('''
+        INSERT INTO rag_documents (content_hash, content_type, source_url, file_name, content_text)
+        VALUES (?, ?, ?, ?, ?)
+    ''', (content_hash, content_type, source_url, file_name, content_text))
+    
+    conn.commit()
+    conn.close()
+    return True  # Document saved successfully
+
+def get_rag_documents():
+    """Get all RAG documents"""
+    conn = sqlite3.connect('summarizer.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT content_type, source_url, file_name, content_text, created_at
+        FROM rag_documents ORDER BY created_at DESC
+    ''')
+    documents = cursor.fetchall()
+    conn.close()
+    return documents
+
 def get_summary_history():
     conn = sqlite3.connect('summarizer.db')
     cursor = conn.cursor()
@@ -225,6 +435,23 @@ def get_summary_history():
 
 # Initialize database
 init_database()
+
+# Initialize RAG system in session state
+if 'rag_system' not in st.session_state:
+    st.session_state.rag_system = AdaptiveRAG()
+    # Load existing documents into RAG system
+    documents = get_rag_documents()
+    for doc in documents:
+        content_type, source_url, file_name, content_text, created_at = doc
+        source_info = {
+            'source': source_url or file_name or 'Unknown',
+            'type': content_type
+        }
+        st.session_state.rag_system.add_document(content_text, source_info)
+
+# Initialize chat history
+if 'chat_history' not in st.session_state:
+    st.session_state.chat_history = []
 
 # Improved video ID extraction
 def extract_video_id(url):
@@ -370,40 +597,41 @@ def generate_gemini_content(text, prompt):
         st.error(f"An error occurred while generating the summary: {e}")
         return None
 
+# --- Web search fallback using Gemini API ---
+def web_search_answer(query, api_key):
+    try:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel("gemini-1.5-flash")
+        # Use Gemini's web search tool by instructing the model
+        prompt = f"""
+You are an AI assistant with access to the web. Please answer the following question using up-to-date information from the web. Be concise and only provide the required information. If you use any sources, mention them if possible.
+
+Question: {query}
+
+Answer concisely:"""
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        return f"Error using web search: {str(e)}"
+
 def get_prompt(content_type, specific_type=""):
     if content_type == "YouTube Video":
-        if specific_type == "Entertaining":
-            return """You are a YouTube video summarizer. You will be taking the transcript text and creating a fun, engaging summary.
-Describe the key events, funny moments, and overall narrative of the video.
-Please provide a summary of the text given here: """
-        elif specific_type == "Musical":
-            return """You are a lyrics extractor for YouTube videos. You will be taking the transcript text of a music video.
-Your task is to extract and format the lyrics of the song. Please ignore any non-lyrical content like intros, outros, or spoken parts.
-Please provide the lyrics from the text given here: """
-        else:  # Default to Educational/Informational
-            return """You are a YouTube video summarizer. You will be taking the transcript text
-and summarizing the entire video. Your goal is to provide a detailed summary that covers all the theoretical concepts and main points discussed in the video.
-Please provide the summary of the text given here, focusing on capturing all theoretical aspects in a clear and structured manner: """
-    
+        return '''You are a YouTube video content analyzer. Based on the provided transcript text, determine the video type (entertaining, musical, or educational/informational) and perform the following: 
+        - Entertaining videos: Write a lively, engaging summary in paragraph form highlighting key events, funny moments, and the overall narrative.
+        - Musical videos: Extract and format the song lyrics in paragraph form, excluding non-lyrical content like intros, outros, or spoken parts.
+        - Educational/informational videos: Provide a clear, structured summary in paragraph form and bullet points of all theoretical concepts and main points discussed.
+        Analyze the transcript and deliver the appropriate output for the video type.'''
     elif content_type == "Website/URL":
-        return """You are a website content summarizer. You will be taking the text content from a webpage
-and creating a comprehensive summary. Focus on the main topics, key information, and important details.
-Please provide a well-structured summary of the content given here: """
-    
+        return """You are a website content summarizer. Based on the provided webpage text, create a comprehensive summary focusing on the main topics, key information, and important details. Present the summary in paragraph form and bullet points for clarity."""
     elif content_type == "PDF Document":
-        return """You are a PDF document summarizer. You will be taking the text content from a PDF document
-and creating a detailed summary. Focus on the main topics, key concepts, important findings, and conclusions.
-Please provide a comprehensive summary of the document content given here: """
-    
+        return """You are a PDF document summarizer. Based on the provided PDF text, create a detailed summary focusing on the main topics, key concepts, important findings, and conclusions. Present the summary in paragraph form and bullet points for clarity."""
     else:
-        return """You are a content summarizer. You will be taking text content and creating a comprehensive summary.
-Focus on the main topics, key information, and important details.
-Please provide a well-structured summary of the content given here: """
+        return """You are a content summarizer. Based on the provided text, create a comprehensive summary focusing on the main topics, key information, and important details. Present the summary in paragraph form and bullet points for clarity."""
 
-# --- Sidebar: API Key Entry ---
+# --- Sidebar: API Key Entry and RAG Status ---
 with st.sidebar:
     st.markdown("""
-    <div style=\"text-align: center; padding: 1rem;\">
+    <div style="text-align: center; padding: 1rem;">
         <h2>🔑 Gemini API Key</h2>
         <p>Enter your Google Gemini API key to use the app.</p>
     </div>
@@ -416,10 +644,39 @@ with st.sidebar:
     )
     if user_api_key:
         st.session_state["user_gemini_api_key"] = user_api_key
-    # Show summary history only if API key is present
+    
+    # RAG System Status
     if st.session_state.get("user_gemini_api_key"):
         st.markdown("""
-        <div style=\"text-align: center; padding: 1rem;\">
+        <div style="text-align: center; padding: 1rem;">
+            <h2>🤖 RAG Chatbot</h2>
+            <p>Documents loaded for Q&A</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Show loaded documents
+        rag_docs = get_rag_documents()
+        st.write(f"**📚 Loaded Documents: {len(rag_docs)}**")
+        
+        if rag_docs:
+            for i, (content_type, source_url, file_name, _, created_at) in enumerate(rag_docs[-5:]):  # Show last 5
+                source_display = source_url or file_name or "Unknown"
+                if len(source_display) > 30:
+                    source_display = source_display[:27] + "..."
+                st.write(f"• {content_type}: {source_display}")
+        
+        if st.button("🗑️ Clear All Documents"):
+            conn = sqlite3.connect('summarizer.db')
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM rag_documents')
+            conn.commit()
+            conn.close()
+            st.session_state.rag_system.clear_documents()
+            st.rerun()
+        
+        # Show summary history
+        st.markdown("""
+        <div style="text-align: center; padding: 1rem;">
             <h2>📚 Summary History</h2>
             <p>Your recent summaries</p>
         </div>
@@ -460,217 +717,324 @@ if not st.session_state.get("user_gemini_api_key"):
 st.markdown("""
 <div class="main-header">
     <h1>🚀 AI Content Summarizer </h1>
-    <p>Transform YouTube videos, websites, and PDFs into concise, intelligent summaries</p>
+    <p>Transform YouTube videos, websites, and PDFs into concise, intelligent summaries with RAG-powered Q&A</p>
 </div>
 """, unsafe_allow_html=True)
 
-# Initialize session state for content selection
-if 'selected_content' not in st.session_state:
-    st.session_state.selected_content = None
+# Tab selection
+tab1, tab2 = st.tabs(["📄 Content Summarizer", "🤖 RAG Chatbot"])
 
-# Content type selection with start buttons
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    st.markdown("""
-    <div class="content-card">
-        <h3>🎥 YouTube Videos</h3>
-        <p>Extract transcripts and create engaging summaries</p>
-    </div>
-    """, unsafe_allow_html=True)
-    if st.button("🚀 Start YouTube Summarizer", key="youtube_start", use_container_width=True):
-        st.session_state.selected_content = "youtube"
-
-with col2:
-    st.markdown("""
-    <div class="content-card">
-        <h3>🌐 Websites</h3>
-        <p>Scrape and summarize web content instantly</p>
-    </div>
-    """, unsafe_allow_html=True)
-    if st.button("🚀 Start Website Summarizer", key="website_start", use_container_width=True):
-        st.session_state.selected_content = "website"
-
-with col3:
-    st.markdown("""
-    <div class="content-card">
-        <h3>📄 PDF Documents</h3>
-        <p>Process and summarize PDF files with ease</p>
-    </div>
-    """, unsafe_allow_html=True)
-    if st.button("🚀 Start PDF Summarizer", key="pdf_start", use_container_width=True):
-        st.session_state.selected_content = "pdf"
-
-# Show content based on selection
-if st.session_state.selected_content == "youtube":
-    content_type = "🎥 YouTube Video"
-elif st.session_state.selected_content == "website":
-    content_type = "🌐 Website/URL"
-elif st.session_state.selected_content == "pdf":
-    content_type = "📄 PDF Document"
-else:
-    content_type = None
-
-# Initialize variables
-text_content = None
-error_message = None
-source_url = None
-file_name = None
-
-# Show back button if content is selected
-if st.session_state.selected_content:
-    if st.button("← Back to Selection", key="back_btn"):
+with tab1:
+    # Initialize session state for content selection
+    if 'selected_content' not in st.session_state:
         st.session_state.selected_content = None
-        st.rerun()
 
-if content_type == "🎥 YouTube Video":
-    st.markdown("""
-    <div class="content-card">
-        <h2>🎥 YouTube Video Summarizer</h2>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    youtube_link = st.text_input("🔗 **Enter YouTube Video Link:**", placeholder="Paste your YouTube video URL here...")
-    
-    video_type = st.selectbox(
-        "🎬 **Select Video Type:**",
-        ("📚 Educational/Informational", "😂 Entertaining", "🎵 Musical")
-    )
-    
-    if youtube_link:
-        video_id = extract_video_id(youtube_link)
-        if video_id:
-            st.image(f"http://img.youtube.com/vi/{video_id}/0.jpg", use_column_width=True, caption="Video Preview")
-        else:
-            st.error("❌ Invalid YouTube link.")
-    
-    if st.button("✨ Get YouTube Summary"):
+    # Content type selection with start buttons
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.markdown("""
+        <div class="content-card">
+            <h3>🎥 YouTube Videos</h3>
+            <p>Extract transcripts and create engaging summaries</p>
+        </div>
+        """, unsafe_allow_html=True)
+        if st.button("🚀 Start YouTube Summarizer", key="youtube_start", use_container_width=True):
+            st.session_state.selected_content = "youtube"
+
+    with col2:
+        st.markdown("""
+        <div class="content-card">
+            <h3>🌐 Websites</h3>
+            <p>Scrape and summarize web content instantly</p>
+        </div>
+        """, unsafe_allow_html=True)
+        if st.button("🚀 Start Website Summarizer", key="website_start", use_container_width=True):
+            st.session_state.selected_content = "website"
+
+    with col3:
+        st.markdown("""
+        <div class="content-card">
+            <h3>📄 PDF Documents</h3>
+            <p>Process and summarize PDF files with ease</p>
+        </div>
+        """, unsafe_allow_html=True)
+        if st.button("🚀 Start PDF Summarizer", key="pdf_start", use_container_width=True):
+            st.session_state.selected_content = "pdf"
+
+    # Show content based on selection
+    if st.session_state.selected_content == "youtube":
+        content_type = "🎥 YouTube Video"
+    elif st.session_state.selected_content == "website":
+        content_type = "🌐 Website/URL"
+    elif st.session_state.selected_content == "pdf":
+        content_type = "📄 PDF Document"
+    else:
+        content_type = None
+
+    # Initialize variables
+    text_content = None
+    error_message = None
+    source_url = None
+    file_name = None
+
+    # Show back button if content is selected
+    if st.session_state.selected_content:
+        if st.button("← Back to Selection", key="back_btn"):
+            st.session_state.selected_content = None
+            st.rerun()
+
+    if content_type == "🎥 YouTube Video":
+        st.markdown("""
+        <div class="content-card">
+            <h2>🎥 YouTube Video Summarizer</h2>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        youtube_link = st.text_input("🔗 **Enter YouTube Video Link:**", placeholder="Paste your YouTube video URL here...")
+          
+        add_to_rag = st.checkbox("🤖 Add to RAG Chatbot for Q&A", value=True)
+        
         if youtube_link:
-            source_url = youtube_link
-            text_content = extract_transcript_details(youtube_link)
-            if text_content:
-                prompt = get_prompt("YouTube Video", video_type.split()[1])  # Extract type without emoji
-        else:
-            st.error("Please enter a YouTube URL first.")
-
-elif content_type == "🌐 Website/URL":
-    st.markdown("""
-    <div class="content-card">
-        <h2>🌐 Website/URL Summarizer</h2>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    website_url = st.text_input("🔗 **Enter Website URL:**", placeholder="https://example.com")
-    
-    if st.button("✨ Get Website Summary"):
-        if website_url:
-            source_url = website_url
-            with st.spinner("⏳ Extracting content from website..."):
-                text_content, error_message = extract_website_text(website_url)
-            if error_message:
-                st.error(f"❌ {error_message}")
-        else:
-            st.error("Please enter a website URL first.")
-
-elif content_type == "📄 PDF Document":
-    st.markdown("""
-    <div class="content-card">
-        <h2>📄 PDF Document Summarizer</h2>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    pdf_file = st.file_uploader("📁 **Upload PDF Document:**", type=['pdf'])
-    
-    if st.button("✨ Get PDF Summary"):
-        if pdf_file:
-            file_name = pdf_file.name
-            with st.spinner("⏳ Extracting content from PDF..."):
-                text_content, error_message = extract_pdf_text(pdf_file)
-            if error_message:
-                st.error(f"❌ {error_message}")
-        else:
-            st.error("Please upload a PDF file first.")
-
-# Generate summary if we have content
-if text_content and not error_message:
-    with st.spinner("⏳ Generating summary, please wait..."):
-        # Determine the content type for prompt
-        if content_type == "🎥 YouTube Video":
-            prompt = get_prompt("YouTube Video", video_type.split()[1])
-            content_type_clean = "YouTube Video"
-        elif content_type == "🌐 Website/URL":
-            prompt = get_prompt("Website/URL")
-            content_type_clean = "Website/URL"
-        elif content_type == "📄 PDF Document":
-            prompt = get_prompt("PDF Document")
-            content_type_clean = "PDF Document"
+            video_id = extract_video_id(youtube_link)
+            if video_id:
+                st.image(f"http://img.youtube.com/vi/{video_id}/0.jpg", use_column_width=True, caption="Video Preview")
+            else:
+                st.error("❌ Invalid YouTube link.")
         
-        summary = generate_gemini_content(text_content, prompt)
+        if st.button("✨ Get YouTube Summary"):
+            if youtube_link:
+                source_url = youtube_link
+                text_content = extract_transcript_details(youtube_link)
+                if text_content:
+                    # Use a general prompt for all video types
+                    prompt = get_prompt("YouTube Video", "Any")
+                    # Add to RAG system if requested
+                    if add_to_rag and text_content:
+                        source_info = {
+                            'source': youtube_link,
+                            'type': 'YouTube Video'
+                        }
+                        if save_rag_document('YouTube Video', youtube_link, None, text_content):
+                            st.session_state.rag_system.add_document(text_content, source_info)
+                            st.success("✅ Video content added to RAG chatbot!")
+                        else:
+                            st.info("ℹ️ This video is already in the RAG system.")
+            else:
+                st.error("Please enter a YouTube URL first.")
+
+    elif content_type == "🌐 Website/URL":
+        st.markdown("""
+        <div class="content-card">
+            <h2>🌐 Website/URL Summarizer</h2>
+        </div>
+        """, unsafe_allow_html=True)
         
-        if summary:
-            # Calculate statistics
-            word_count = len(text_content.split())
-            char_count = len(text_content)
-            summary_words = len(summary.split())
-            compression_ratio = (summary_words / word_count) * 100 if word_count > 0 else 0
-            
-            # Save to database
-            save_summary(content_type_clean, source_url, file_name, summary, word_count, char_count, compression_ratio)
-            
-            # Display statistics
-            st.markdown("""
-            <div class="stats-container">
-                <div class="stat-item">
-                    <span class="stat-value">{}</span>
-                    <span class="stat-label">Original Words</span>
-                </div>
-                <div class="stat-item">
-                    <span class="stat-value">{}</span>
-                    <span class="stat-label">Summary Words</span>
-                </div>
-                <div class="stat-item">
-                    <span class="stat-value">{:.1f}%</span>
-                    <span class="stat-label">Compression</span>
-                </div>
-            </div>
-            """.format(word_count, summary_words, compression_ratio), unsafe_allow_html=True)
-            
-            # Display appropriate header based on content type
+        website_url = st.text_input("🔗 **Enter Website URL:**", placeholder="https://example.com")
+        add_to_rag = st.checkbox("🤖 Add to RAG Chatbot for Q&A", value=True)
+        
+        if st.button("✨ Get Website Summary"):
+            if website_url:
+                source_url = website_url
+                with st.spinner("⏳ Extracting content from website..."):
+                    text_content, error_message = extract_website_text(website_url)
+                if error_message:
+                    st.error(f"❌ {error_message}")
+                elif add_to_rag and text_content:
+                    source_info = {
+                        'source': website_url,
+                        'type': 'Website/URL'
+                    }
+                    if save_rag_document('Website/URL', website_url, None, text_content):
+                        st.session_state.rag_system.add_document(text_content, source_info)
+                        st.success("✅ Website content added to RAG chatbot!")
+                    else:
+                        st.info("ℹ️ This website is already in the RAG system.")
+            else:
+                st.error("Please enter a website URL first.")
+
+    elif content_type == "📄 PDF Document":
+        st.markdown("""
+        <div class="content-card">
+            <h2>📄 PDF Document Summarizer</h2>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        pdf_file = st.file_uploader("📁 **Upload PDF Document:**", type=['pdf'])
+        add_to_rag = st.checkbox("🤖 Add to RAG Chatbot for Q&A", value=True)
+        
+        if st.button("✨ Get PDF Summary"):
+            if pdf_file:
+                file_name = pdf_file.name
+                with st.spinner("⏳ Extracting content from PDF..."):
+                    text_content, error_message = extract_pdf_text(pdf_file)
+                if error_message:
+                    st.error(f"❌ {error_message}")
+                elif add_to_rag and text_content:
+                    source_info = {
+                        'source': file_name,
+                        'type': 'PDF Document'
+                    }
+                    if save_rag_document('PDF Document', None, file_name, text_content):
+                        st.session_state.rag_system.add_document(text_content, source_info)
+                        st.success("✅ PDF content added to RAG chatbot!")
+                    else:
+                        st.info("ℹ️ This PDF is already in the RAG system.")
+            else:
+                st.error("Please upload a PDF file first.")
+
+    # Generate summary if we have content
+    if text_content and not error_message:
+        with st.spinner("⏳ Generating summary, please wait..."):
+            # Determine the content type for prompt
             if content_type == "🎥 YouTube Video":
-                if "Musical" in video_type:
-                    st.markdown("### 🎤 Lyrics")
-                elif "Entertaining" in video_type:
-                    st.markdown("### 😂 Fun Summary")
-                else:
-                    st.markdown("### 📝 Detailed Notes")
+                prompt = get_prompt("YouTube Video", "Any")
+                content_type_clean = "YouTube Video"
             elif content_type == "🌐 Website/URL":
-                st.markdown("### 🌐 Website Summary")
+                prompt = get_prompt("Website/URL")
+                content_type_clean = "Website/URL"
             elif content_type == "📄 PDF Document":
-                st.markdown("### 📄 Document Summary")
+                prompt = get_prompt("PDF Document")
+                content_type_clean = "PDF Document"
             
-            st.markdown("""
-            <div class="success-box">
-                ✅ Summary generated and saved successfully!
-            </div>
-            """, unsafe_allow_html=True)
+            summary = generate_gemini_content(text_content, prompt)
             
-            st.markdown("""
-            <div class="summary-result">
-                {}
-            </div>
-            """.format(summary), unsafe_allow_html=True)
-            
-        else:
-            st.markdown("""
-            <div class="error-box">
-                ⚠️ Could not generate summary
-            </div>
-            """, unsafe_allow_html=True)
+            if summary:
+                # Calculate statistics
+                word_count = len(text_content.split())
+                char_count = len(text_content)
+                summary_words = len(summary.split())
+                compression_ratio = (summary_words / word_count) * 100 if word_count > 0 else 0
+                
+                # Save to database
+                save_summary(content_type_clean, source_url, file_name, summary, word_count, char_count, compression_ratio)
+                
+                # Display statistics
+                st.markdown("""
+                <div class="stats-container">
+                    <div class="stat-item">
+                        <span class="stat-value">{}</span>
+                        <span class="stat-label">Original Words</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-value">{}</span>
+                        <span class="stat-label">Summary Words</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-value">{:.1f}%</span>
+                        <span class="stat-label">Compression</span>
+                    </div>
+                </div>
+                """.format(word_count, summary_words, compression_ratio), unsafe_allow_html=True)
+                
+                # Display appropriate header based on content type
+                if content_type == "🎥 YouTube Video":
+                    st.markdown("### 🎥 Detailed Notes")
+                elif content_type == "🌐 Website/URL":
+                    st.markdown("### 🌐 Website Summary")
+                elif content_type == "📄 PDF Document":
+                    st.markdown("### 📄 Document Summary")
+                
+                st.markdown("""
+                <div class="success-box">
+                    ✅ Summary generated and saved successfully!
+                </div>
+                """, unsafe_allow_html=True)
+                
+                st.markdown("""
+                <div class="summary-result">
+                    {}
+                </div>
+                """.format(summary), unsafe_allow_html=True)
+                
+            else:
+                st.markdown("""
+                <div class="error-box">
+                    ⚠️ Could not generate summary
+                </div>
+                """, unsafe_allow_html=True)
+
+with tab2:
+    st.markdown("""
+    <div class="content-card">
+        <h2>🤖 RAG-Powered Chatbot</h2>
+        <p>Ask questions about your uploaded documents. The chatbot will provide answers based on the content you've added.</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Check if there are any documents loaded
+    rag_docs = get_rag_documents()
+    
+    if not rag_docs:
+        st.warning("⚠️ No documents loaded yet! Please upload some content in the 'Content Summarizer' tab first.")
+        st.info("💡 Upload YouTube videos, websites, or PDFs with the 'Add to RAG Chatbot' option enabled.")
+    else:
+        # Display loaded documents
+        with st.expander(f"📚 View Loaded Documents ({len(rag_docs)} total)"):
+            for i, (content_type, source_url, file_name, _, created_at) in enumerate(rag_docs):
+                source_display = source_url or file_name or "Unknown"
+                st.write(f"**{i+1}.** {content_type}: {source_display}")
+                st.write(f"   Added: {created_at[:16]}")
+        # Chat interface
+        st.markdown("### 💬 Chat with your documents")
+        # Display chat history
+        if st.session_state.chat_history:
+            st.markdown('<div class="chat-container">', unsafe_allow_html=True)
+            for message in st.session_state.chat_history:
+                if message['role'] == 'user':
+                    st.markdown(f'<div class="user-message">🧑‍💻 You: {message["content"]}</div>', unsafe_allow_html=True)
+                else:
+                    st.markdown(f'<div class="bot-message">🤖 Assistant: {message["content"]}</div>', unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+        # Chat input
+        user_question = st.text_input(
+            "Ask a question about your documents:",
+            placeholder="What are the main points discussed in the uploaded content?",
+            key="chat_input"
+        )
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            if st.button("🚀 Send Question", use_container_width=True):
+                if user_question.strip():
+                    st.session_state.chat_history.append({
+                        'role': 'user',
+                        'content': user_question
+                    })
+                    with st.spinner("🤔 Thinking..."):
+                        # Check if user wants detail
+                        detail_phrases = [
+                            'tell in detail', 'explain in detail', 'give me details', 'detailed answer', 'in detail', 'elaborate', 'full explanation'
+                        ]
+                        user_lower = user_question.lower()
+                        wants_detail = any(phrase in user_lower for phrase in detail_phrases)
+                        if wants_detail:
+                            response = st.session_state.rag_system.generate_response(
+                                user_question,
+                                st.session_state.get("user_gemini_api_key")
+                            )
+                        else:
+                            # Add instruction for concise answer
+                            concise_query = user_question + "\n\nPlease answer concisely and only provide the required information. Do not elaborate or give extra details unless I ask for detail."
+                            response = st.session_state.rag_system.generate_response(
+                                concise_query,
+                                st.session_state.get("user_gemini_api_key")
+                            )
+                    st.session_state.chat_history.append({
+                        'role': 'assistant',
+                        'content': response
+                    })
+                    st.rerun()
+                else:
+                    st.error("Please enter a question.")
+        with col2:
+            if st.button("🗑️ Clear Chat", use_container_width=True):
+                st.session_state.chat_history = []
+                st.rerun()
 
 st.markdown("---")
 st.markdown("""
 <div style="text-align: center; padding: 2rem; color: #666;">
-    <p>Made with ❤️ using Streamlit 🚀, Gemini 🪐, and AI-Powered Content Analysis 📊</p>
-    <p>Your summaries are automatically saved to the database for future reference.</p>
+    <p>Made with ❤️ using Streamlit 🚀, Gemini 🪐, and AI-Powered RAG 🤖</p>
+    <p>Your summaries and documents are automatically saved for RAG-powered Q&A.</p>
 </div>
 """, unsafe_allow_html=True)
