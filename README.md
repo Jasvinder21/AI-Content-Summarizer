@@ -165,7 +165,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## 🙏 Acknowledgments
 
-- Built with ❤️ using Streamlit, Google Gemini API, and advanced RAG techniques.
+- Built with ❤️ using Streamlit and advanced RAG techniques.
 - Thanks to the open-source community for libraries like SentenceTransformers, FAISS, and youtube-transcript-api.
 
 ## 📞 Support
